@@ -2,3 +2,4 @@ Flask
 beautifulsoup4
 duckduckgo-search
 psutil
+gunicorn
