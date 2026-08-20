@@ -34,8 +34,6 @@ import urllib.request
 import webbrowser
 from datetime import datetime
 
-from duckduckgo_search import DDGS
-
 try:
     from bs4 import BeautifulSoup
 except ImportError:
@@ -1025,33 +1023,57 @@ def deep_read_page(url):
     return paragraphs
 
 def perform_web_search(query):
-    # 1. Очищаем запрос от мусорных слов (найди, загугли и т.д.)
+    # 1. Очищаем запрос от команд
     clean_q = clean_search_query(query)
-    
-    # Если после очистки запрос оказался пустым
     if not clean_q:
         return f"{emo('error')} Пустой поисковой запрос."
-        
-    log(f"Ищу в интернете через DDGS: '{clean_q}' (оригинал: '{query}')")
+
+    log(f"Ищу в интернете (HTML): '{clean_q}'")
+
+    # 2. Формируем прямой URL к HTML-версии DuckDuckGo
+    encoded = urllib.parse.quote(clean_q)
+    url = f"https://html.duckduckgo.com/html/?q={encoded}"
     
+    # 3. Маскируемся под обычный браузер
+    req = urllib.request.Request(
+        url, 
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    )
+
     try:
-        # 2. Передаем в библиотеку ОЧИЩЕННЫЙ запрос
-        results = list(DDGS().text(clean_q, max_results=3))
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read()
+
+        soup = BeautifulSoup(html, "html.parser")
         
+        # Ищем блоки с результатами
+        results = []
+        for result in soup.find_all("div", class_=re.compile(r"result__body")):
+            title_tag = result.find("a", class_=re.compile(r"result__a"))
+            snippet_tag = result.find("a", class_=re.compile(r"result__snippet"))
+            
+            if title_tag and snippet_tag:
+                title = title_tag.get_text(strip=True)
+                snippet = snippet_tag.get_text(strip=True)
+                href = unwrap_duckduckgo_redirect(title_tag.get("href", ""))
+                results.append((title, snippet, href))
+
+            if len(results) >= 3:
+                break
+
         if not results:
             return f"{emo('error')} К сожалению, не удалось найти информацию по запросу «{clean_q}»."
 
-        result_lines = [f"{emo('search')} Вот что удалось найти в интернете:\n"]
-        for item in results:
-            title = item.get("title", "Без названия")
-            snippet = item.get("body", "")
-            url = item.get("href", "")
-            result_lines.append(f"📌 **{title}**\n{snippet}\n🔗 {url}\n")
+        # Формируем итоговый ответ
+        result_lines = [f"{emo('search')} Вот что удалось найти:\n"]
+        for title, snippet, link in results:
+            result_lines.append(f"📌 **{title}**\n{snippet}\n🔗 {link}\n")
 
         return "\n".join(result_lines)
+
     except Exception as e:
-        log(f"Ошибка при поиске DDGS: {e}")
-        return f"{emo('error')} Не удалось выполнить веб-поиск (сервер временно недоступен или заблокирован)."
+        log(f"Ошибка парсинга HTML: {e}")
+        return f"{emo('error')} Не удалось выполнить веб-поиск ({e})."
       
 def parse_page_headlines(url, max_headlines=10):
     """Извлекает заголовки (h1-h3) со страницы — полезно для новостных лент."""
