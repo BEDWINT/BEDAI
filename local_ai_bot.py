@@ -33,6 +33,8 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from datetime import datetime
+from googlesearch import search
+
 
 try:
     from bs4 import BeautifulSoup
@@ -878,10 +880,10 @@ def solve_math_or_task(user_input):
 
     return None
 
+# =========================================================================================
+# 5. ВЕБ-МОДУЛЬ: ПОИСК (GOOGLE), ЧТЕНИЕ СТРАНИЦ, ЗАГОЛОВКИ, СКАЧИВАНИЕ, ОТКРЫТИЕ В БРАУЗЕРЕ
+# =========================================================================================
 
-# =========================================================================================
-# 5. ВЕБ-МОДУЛЬ: ПОИСК, ЧТЕНИЕ СТРАНИЦ, ЗАГОЛОВКИ, СКАЧИВАНИЕ, ОТКРЫТИЕ В БРАУЗЕРЕ
-# =========================================================================================
 
 SEARCH_TRIGGERS = [
     r"^найди\s+", r"^погугли\s+", r"^ищи\s+", r"^поищи\s+",
@@ -935,7 +937,7 @@ def normalize_url(raw_url):
     return raw_url
 
 
-def fetch_url(url, timeout=8):
+def fetch_url(url, timeout=10):
     safe_url = safe_encode_url(url)
     req = urllib.request.Request(safe_url, headers={"User-Agent": FAKE_USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -943,50 +945,43 @@ def fetch_url(url, timeout=8):
     return raw
 
 
-def unwrap_duckduckgo_redirect(href):
-    if href.startswith("//"):
-        href = "https:" + href
-    if "duckduckgo.com/l/" in href or "duckduckgo.com/y.js" in href:
-        parsed = urllib.parse.urlparse(href)
-        qs = urllib.parse.parse_qs(parsed.query)
-        if "uddg" in qs and qs["uddg"]:
-            return urllib.parse.unquote(qs["uddg"][0])
-        return None
-    return href
+def perform_web_search(query):
+    # 1. Очищаем запрос от команд
+    clean_q = clean_search_query(query)
+    if not clean_q:
+        return f"{emo('error')} Пустой поисковой запрос."
 
+    log(f"Ищу в интернете (Google): '{clean_q}'")
 
-def duckduckgo_search_links(query, max_links=1):
-    encoded = urllib.parse.quote(query)
-    search_url = f"https://html.duckduckgo.com/html/?q={encoded}"
-    log(f"Отправляю запрос в поисковик: '{query}'")
     try:
-        raw = fetch_url(search_url)
+        # 2. Выполняем поиск через Google (advanced=True возвращает объект с title, description, url)
+        results_generator = search(clean_q, num_results=3, advanced=True, lang="ru")
+        
+        results = []
+        for item in results_generator:
+            title = getattr(item, "title", "Без названия")
+            snippet = getattr(item, "description", "")
+            url = getattr(item, "url", str(item))
+            
+            if url and "google.com" not in url:
+                results.append((title, snippet, url))
+            
+            if len(results) >= 3:
+                break
+
+        if not results:
+            return f"{emo('error')} К сожалению, не удалось найти информацию по запросу «{clean_q}»."
+
+        # 3. Формируем итоговый ответ
+        result_lines = [f"{emo('search')} Вот что удалось найти:\n"]
+        for title, snippet, link in results:
+            result_lines.append(f"📌 **{title}**\n{snippet}\n🔗 {link}\n")
+
+        return "\n".join(result_lines)
+
     except Exception as e:
-        log(f"Ошибка при обращении к поисковику: {e}")
-        return []
-
-    soup = BeautifulSoup(raw, "html.parser")
-    links = []
-    candidates = soup.find_all("a", class_=re.compile(r"result__a"))
-    if not candidates:
-        candidates = soup.select("a[href]")
-
-    for a_tag in candidates:
-        href = a_tag.get("href")
-        if not href:
-            continue
-        real_url = unwrap_duckduckgo_redirect(href)
-        if not real_url or not real_url.startswith("http") or "duckduckgo.com" in real_url:
-            continue
-        if real_url in links:
-            continue
-        links.append(real_url)
-        if len(links) >= max_links:
-            break
-
-    if not links:
-        log("Поисковая выдача не содержит распознаваемых ссылок.")
-    return links[:max_links]
+        log(f"Ошибка поиска Google: {e}")
+        return f"{emo('error')} Не удалось выполнить веб-поиск через Google ({e})."
 
 
 JUNK_PATTERNS = [
@@ -1022,59 +1017,7 @@ def deep_read_page(url):
             paragraphs.append(text)
     return paragraphs
 
-def perform_web_search(query):
-    # 1. Очищаем запрос от команд
-    clean_q = clean_search_query(query)
-    if not clean_q:
-        return f"{emo('error')} Пустой поисковой запрос."
 
-    log(f"Ищу в интернете (HTML): '{clean_q}'")
-
-    # 2. Формируем прямой URL к HTML-версии DuckDuckGo
-    encoded = urllib.parse.quote(clean_q)
-    url = f"https://html.duckduckgo.com/html/?q={encoded}"
-    
-    # 3. Маскируемся под обычный браузер
-    req = urllib.request.Request(
-        url, 
-        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            html = resp.read()
-
-        soup = BeautifulSoup(html, "html.parser")
-        
-        # Ищем блоки с результатами
-        results = []
-        for result in soup.find_all("div", class_=re.compile(r"result__body")):
-            title_tag = result.find("a", class_=re.compile(r"result__a"))
-            snippet_tag = result.find("a", class_=re.compile(r"result__snippet"))
-            
-            if title_tag and snippet_tag:
-                title = title_tag.get_text(strip=True)
-                snippet = snippet_tag.get_text(strip=True)
-                href = unwrap_duckduckgo_redirect(title_tag.get("href", ""))
-                results.append((title, snippet, href))
-
-            if len(results) >= 3:
-                break
-
-        if not results:
-            return f"{emo('error')} К сожалению, не удалось найти информацию по запросу «{clean_q}»."
-
-        # Формируем итоговый ответ
-        result_lines = [f"{emo('search')} Вот что удалось найти:\n"]
-        for title, snippet, link in results:
-            result_lines.append(f"📌 **{title}**\n{snippet}\n🔗 {link}\n")
-
-        return "\n".join(result_lines)
-
-    except Exception as e:
-        log(f"Ошибка парсинга HTML: {e}")
-        return f"{emo('error')} Не удалось выполнить веб-поиск ({e})."
-      
 def parse_page_headlines(url, max_headlines=10):
     """Извлекает заголовки (h1-h3) со страницы — полезно для новостных лент."""
     try:
