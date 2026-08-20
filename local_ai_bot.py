@@ -34,6 +34,8 @@ import urllib.request
 import webbrowser
 from datetime import datetime
 
+from duckduckgo_search import DDGS
+
 try:
     from bs4 import BeautifulSoup
 except ImportError:
@@ -1022,32 +1024,24 @@ def deep_read_page(url):
             paragraphs.append(text)
     return paragraphs
 
-
 def perform_web_search(query):
-    log("Ищу ссылки...")
-    links = duckduckgo_search_links(query, max_links=settings["search_depth"])
+    log(f"Ищу в интернете через DDGS: {query}")
+    try:
+        results = list(DDGS().text(query, max_results=3))
+        if not results:
+            return f"{emo('error')} К сожалению, не удалось найти информацию по запросу «{query}»."
 
-    if not links:
-        return f"{emo('error')} К сожалению, не удалось найти релевантные ссылки по этому запросу."
+        result_lines = [f"{emo('search')} Вот что удалось найти в интернете:\n"]
+        for item in results:
+            title = item.get("title", "Без названия")
+            snippet = item.get("body", "")
+            url = item.get("href", "")
+            result_lines.append(f"📌 **{title}**\n{snippet}\n🔗 {url}\n")
 
-    collected = []
-    for link in links:
-        log(f"Читаю страницу: {link}")
-        paragraphs = deep_read_page(link)
-        useful = paragraphs[:5]
-        if useful:
-            collected.append((link, useful))
-            break
-
-    if not collected:
-        return f"{emo('error')} Ссылка найдена, но содержательный текст извлечь не удалось."
-
-    link, paragraphs = collected[0]
-    result_lines = [f"{emo('search')} Вот что удалось найти в источнике ({link}):\n"]
-    for p in paragraphs:
-        result_lines.append(f" — {p}")
-    return "\n".join(result_lines)
-
+        return "\n".join(result_lines)
+    except Exception as e:
+        log(f"Ошибка при поиске DDGS: {e}")
+        return f"{emo('error')} Не удалось выполнить веб-поиск (сервер временно недоступен или заблокирован)."
 
 def parse_page_headlines(url, max_headlines=10):
     """Извлекает заголовки (h1-h3) со страницы — полезно для новостных лент."""
