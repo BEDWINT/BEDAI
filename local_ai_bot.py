@@ -1025,11 +1025,21 @@ def deep_read_page(url):
     return paragraphs
 
 def perform_web_search(query):
-    log(f"Ищу в интернете через DDGS: {query}")
+    # 1. Очищаем запрос от мусорных слов (найди, загугли и т.д.)
+    clean_q = clean_search_query(query)
+    
+    # Если после очистки запрос оказался пустым
+    if not clean_q:
+        return f"{emo('error')} Пустой поисковой запрос."
+        
+    log(f"Ищу в интернете через DDGS: '{clean_q}' (оригинал: '{query}')")
+    
     try:
-        results = list(DDGS().text(query, max_results=3))
+        # 2. Передаем в библиотеку ОЧИЩЕННЫЙ запрос
+        results = list(DDGS().text(clean_q, max_results=3))
+        
         if not results:
-            return f"{emo('error')} К сожалению, не удалось найти информацию по запросу «{query}»."
+            return f"{emo('error')} К сожалению, не удалось найти информацию по запросу «{clean_q}»."
 
         result_lines = [f"{emo('search')} Вот что удалось найти в интернете:\n"]
         for item in results:
@@ -1042,7 +1052,7 @@ def perform_web_search(query):
     except Exception as e:
         log(f"Ошибка при поиске DDGS: {e}")
         return f"{emo('error')} Не удалось выполнить веб-поиск (сервер временно недоступен или заблокирован)."
-
+      
 def parse_page_headlines(url, max_headlines=10):
     """Извлекает заголовки (h1-h3) со страницы — полезно для новостных лент."""
     try:
